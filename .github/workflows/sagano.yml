@@ -1,0 +1,88 @@
+name: Sagano seat watch
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *" # avoids :00, when GitHub delays runs
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: "Test only: comma-separated YYYY-MM-DD (blank = the 22-27 Nov watch list)"
+        required: false
+        default: ""
+      seats:
+        description: "Test only: seats needed (blank = 2)"
+        required: false
+        default: ""
+
+concurrency:
+  group: sagano-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # After the last watched date, turn the schedule off so it stops for good.
+  window:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    outputs:
+      open: ${{ steps.check.outputs.open }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LAST_DATE: "2026-11-27"
+        run: |
+          today="$(TZ=Asia/Tokyo date +%F)"
+          if [[ "$today" > "$LAST_DATE" ]]; then
+            echo "Past $LAST_DATE (today is $today JST): disabling this workflow."
+            gh workflow disable sagano.yml --repo "$GITHUB_REPOSITORY"
+            echo "open=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  check:
+    needs: window
+    if: needs.window.outputs.open == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - run: python -m playwright install --with-deps chromium
+
+      - name: Restore state.json
+        uses: actions/cache/restore@v6
+        with:
+          path: state.json
+          key: sagano-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: sagano-state-
+
+      - name: Check seats once
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TEST_DATES: ${{ inputs.dates }}
+          TEST_SEATS: ${{ inputs.seats }}
+        run: |
+          args=(--once)
+          if [ -n "$TEST_DATES" ]; then args+=(--dates "$TEST_DATES"); fi
+          if [ -n "$TEST_SEATS" ]; then args+=(--seats "$TEST_SEATS"); fi
+          python sagano_watch.py "${args[@]}"
+
+      - name: Save state.json
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: state.json
+          key: sagano-state-${{ github.run_id }}-${{ github.run_attempt }}
