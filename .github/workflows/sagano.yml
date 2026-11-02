@@ -2,7 +2,7 @@ name: Sagano seat watch
 
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *" # avoids :00, when GitHub delays runs
+    - cron: "7,22,37,52 * * * *" # every 15 minutes, offset to avoid :00
   workflow_dispatch:
     inputs:
       dates:
